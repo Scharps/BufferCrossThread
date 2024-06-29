@@ -31,8 +31,8 @@ public sealed class ExampleBufferWriter
 
     private async Task WriteLoopAsync(CancellationToken cancellationToken)
     {
-        var period = 1000.0 / _sampleRate;
-        var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(period));
+        var period = (double)BlockCapacity / _sampleRate;
+        var timer = new PeriodicTimer(TimeSpan.FromSeconds(period));
 
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
