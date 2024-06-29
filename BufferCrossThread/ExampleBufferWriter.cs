@@ -26,7 +26,8 @@ public sealed class ExampleBufferWriter
     
     public Task RunAsync(CancellationToken cancellationToken = default)
     {
-        return Task.Factory.StartNew(() => WriteLoopAsync(cancellationToken), TaskCreationOptions.LongRunning);
+        return Task.Factory.StartNew(() => WriteLoopAsync(cancellationToken),
+            TaskCreationOptions.LongRunning).Unwrap();
     }
 
     private async Task WriteLoopAsync(CancellationToken cancellationToken)
