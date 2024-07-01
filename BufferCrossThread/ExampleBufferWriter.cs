@@ -1,33 +1,29 @@
+using System.Buffers;
+using R3;
+
 namespace BufferCrossThread;
 
 public sealed class ExampleBufferWriter
 {
-    private const int BlockCapacity = 100;
+    private const int BlockCapacity = 30;
     private readonly ChannelBuffer<float> _buffer;
     private readonly int _sampleRate;
     private readonly Random _random = new ();
-    private readonly float[][] _blockBuffer;
-    private readonly TimeSpan _handleLifeSpan;
+    private readonly ArrayPool<List<float>> _blockPool;
+    
+    private readonly Subject<IReadOnlyList<IReadOnlyList<float>>> _bufferWritten = new();
+    public Observable<IReadOnlyList<IReadOnlyList<float>>> BufferWritten => _bufferWritten.AsObservable();
 
     public ExampleBufferWriter(ChannelBuffer<float> buffer, int sampleRate)
     {
         _buffer = buffer;
         _sampleRate = sampleRate;
-        
-        // sampleRate in Hz. This is a rough calculation, safety margins need to be implemented.
-        _handleLifeSpan =  TimeSpan.FromSeconds((double)_buffer.Capacity / sampleRate);
-        
-        _blockBuffer = new float[_buffer.ChannelCount][];
-        for (var i = 0; i < _buffer.ChannelCount; i++)
-        {
-            _blockBuffer[i] = new float[BlockCapacity];
-        }
+        _blockPool = ArrayPool<List<float>>.Create(_buffer.ChannelCount, _buffer.ChannelCount * 2);
     }
     
     public Task RunAsync(CancellationToken cancellationToken = default)
     {
-        return Task.Factory.StartNew(() => WriteLoopAsync(cancellationToken),
-            TaskCreationOptions.LongRunning).Unwrap();
+        return Task.Run(() => WriteLoopAsync(cancellationToken), cancellationToken);
     }
 
     private async Task WriteLoopAsync(CancellationToken cancellationToken)
@@ -37,26 +33,30 @@ public sealed class ExampleBufferWriter
 
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
-            PopulateBlockBuffer();
-            var section = _buffer.WriteChannelData(_blockBuffer, BlockCapacity);
-            var handle = new SampleHandle<float>(_buffer, DateTime.UtcNow + _handleLifeSpan, section);
-
-            BufferWritten?.Invoke(ref handle);
+            var blockBuffer = _blockPool.Rent(_buffer.ChannelCount);
+    
+            var count = ClearAndPopulateBlockBuffer(blockBuffer);
+            _buffer.WriteChannelData(blockBuffer, count);
+            _bufferWritten.OnNext(blockBuffer.AsReadOnly());
+    
+            _blockPool.Return(blockBuffer);
         }
     }
 
-    private void PopulateBlockBuffer()
+    private int ClearAndPopulateBlockBuffer(List<float>?[] blockBuffer)
     {
+        var numOfSamples = _random.Next(20, 40);
+        
         for (var channel = 0; channel < _buffer.ChannelCount; channel++)
         {
-            for (var sample = 0; sample < BlockCapacity; sample++)
+            var channelBuffer = blockBuffer[channel] ??= [];
+            channelBuffer.Clear();
+            for (var sample = 0; sample < numOfSamples; sample++)
             {
-                _blockBuffer[channel][sample] = _random.NextSingle();
+                channelBuffer.Add(_random.NextSingle());
             }
         }
-    }
-    
-    public delegate void BufferWrittenDelegate(ref SampleHandle<float> sampleHandle);
 
-    public event BufferWrittenDelegate? BufferWritten;
+        return numOfSamples;
+    }
 }
